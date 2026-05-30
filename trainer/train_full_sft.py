@@ -18,11 +18,12 @@ from model.model_minimind import MiniMindConfig
 from dataset.lm_dataset import SFTDataset
 from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler
 from trainer.training_loop import Accumulator, create_scheduler, wrap_model, save_model_weights, get_raw_model
+from trainer.metrics import MetricsWriter
 
 warnings.filterwarnings('ignore')
 
 
-def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
+def train_epoch(epoch, loader, iters, start_step=0, wandb=None, metrics_writer=None):
     start_time = time.time()
     last_step = start_step
     for step, (input_ids, labels) in enumerate(loader, start=start_step + 1):
@@ -45,6 +46,7 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
             eta_min = spend_time / max(step - start_step, 1) * (iters - step) // 60
             Logger(f'Epoch:[{epoch + 1}/{args.epochs}]({step}/{iters}), loss: {current_loss:.4f}, logits_loss: {current_logits_loss:.4f}, aux_loss: {current_aux_loss:.4f}, lr: {current_lr:.8f}, epoch_time: {eta_min:.1f}min')
             if wandb: wandb.log({"loss": current_loss, "logits_loss": current_logits_loss, "aux_loss": current_aux_loss, "learning_rate": current_lr, "epoch_time": eta_min})
+            if metrics_writer: metrics_writer.write(step=step, loss=current_loss, logits_loss=current_logits_loss, aux_loss=current_aux_loss, lr=current_lr)
 
         if (step % args.save_interval == 0 or step == iters) and is_main_process():
             model.eval()
@@ -99,7 +101,7 @@ if __name__ == "__main__":
     dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
     autocast_ctx = nullcontext() if device_type == "cpu" else torch.cuda.amp.autocast(dtype=dtype)
 
-    # ========== 4. 配wandb ==========
+    # ========== 4. 配wandb和metrics CSV ==========
     wandb = None
     if args.use_wandb and is_main_process():
         import swanlab as wandb
@@ -107,6 +109,8 @@ if __name__ == "__main__":
         resume = 'must' if wandb_id else None
         wandb_run_name = f"MiniMind-Full-SFT-Epoch-{args.epochs}-BatchSize-{args.batch_size}-LearningRate-{args.learning_rate}"
         wandb.init(project=args.wandb_project, name=wandb_run_name, id=wandb_id, resume=resume)
+
+    metrics_writer = MetricsWriter("./metrics.csv") if is_main_process() else None
 
     # ========== 5. 定义模型、数据、优化器 ==========
     model, tokenizer = init_model(lm_config, args.from_weight, device=args.device)
@@ -144,7 +148,7 @@ if __name__ == "__main__":
         iters = len(loader) + skip
         if skip > 0:
             Logger(f'Epoch [{epoch + 1}/{args.epochs}]: 跳过前{start_step}个step，从step {start_step + 1}开始')
-        train_epoch(epoch, loader, iters, start_step, wandb)
+        train_epoch(epoch, loader, iters, start_step, wandb, metrics_writer)
 
     # ========== 10. 清理分布进程 ==========
     if dist.is_initialized(): dist.destroy_process_group()

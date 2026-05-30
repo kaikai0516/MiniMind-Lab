@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "minimind"
+name = "minimind-lab"
 version = "1.0.0"
 description = "MiniMind: 从零开始训练微型大语言模型"
 readme = "README.md"
