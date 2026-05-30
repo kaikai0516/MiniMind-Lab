@@ -33,8 +33,8 @@ def is_main_process():
 
 
 def Logger(content):
-    if is_main_process():
-        print(content)
+    from trainer.logger import Logger as _Logger
+    _Logger(content)
 
 
 def get_lr(current_step, total_steps, lr):

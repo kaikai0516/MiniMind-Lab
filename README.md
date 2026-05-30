@@ -95,6 +95,11 @@
 - 提供兼容 OpenAI API 协议的极简服务端，便于接入 FastGPT、Open-WebUI 等第三方 Chat UI，并支持 `reasoning_content`、`tool_calls`、`open_thinking`。
 - 提供基于 Streamlit 的极简聊天 WebUI，支持思考展示、工具选择与多轮 Tool Call。
 - 包含实验性拓展：离散扩散语言模型（[dLM](https://github.com/jingyaogong/minimind/discussions/618)）与线性注意力模型（[Linear Attention](https://github.com/jingyaogong/minimind/discussions/704)），均可基于主线 AR 模型进行续训。
+- **🆕 多格式数据加载**: `DataLoaderHub` 支持 JSONL / JSON / CSV / Parquet / TXT 多格式自动检测、多文件合并与列别名归一化。
+- **🆕 数据处理 Pipeline**: `DataProcessor` 提供文本清洗、对话验证、长度过滤、SimHash 近似去重的完整管线。
+- **🆕 统一训练基础设施**: `Accumulator` 梯度累积器、`MultiOptimizerAccumulator` 双优化器版本（PPO）、`create_scheduler` 学习率调度、`wrap_model` 模型包装，消除 8 个训练脚本之间的实现差异。
+- **🆕 智能训练配置工具**: `scripts/auto_config.py` 自动探测 GPU/CPU/显存, 分析数据集, 调用大模型 API 推荐最优训练超参数。
+- **🆕 AMD GPU 兼容**: 通过 ROCm 后端支持 AMD Radeon / Instinct 系列显卡，`trainer_utils.py` 中 cuDNN 调用已加兼容守卫。
 
 #### 🎉 已发布模型列表
 
@@ -227,10 +232,62 @@ minimind2系列旧模型均经过权重映射+（微调训练）QKVO线性层校
 ## 第0步
 
 ```bash
-# 克隆仓库、安装依赖
+# 克隆仓库、安装基础依赖
 git clone --depth 1 https://github.com/jingyaogong/minimind
 cd minimind && pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple
 ```
+
+> `requirements.txt` 中 torch 行已注释，请根据你的硬件选择下方 PyTorch 安装方式。
+
+<details>
+<summary><b>🔵 NVIDIA GPU (CUDA)</b></summary>
+
+```bash
+# CUDA 12.4 / 12.6
+pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124
+# CUDA 12.1
+pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
+# CUDA 11.8 (旧卡)
+pip install torch==2.3.0 torchvision==0.18.0 --index-url https://download.pytorch.org/whl/cu118
+```
+
+验证: `python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"`
+</details>
+
+<details>
+<summary><b>🔴 AMD GPU (ROCm)</b></summary>
+
+适用: Radeon RX 7000 系列 (RX 7900 XTX 等)、Instinct MI 系列 (MI250X/MI300X 等)。
+
+> MiniMind 已适配 ROCm：`trainer_utils.py` 中的 cuDNN 调用会自动跳过，`auto_config.py` 会识别 AMD 显卡型号。所有 `torch.cuda.*` API 在 ROCm 下均可正常使用。
+
+```bash
+# ROCm 6.x (推荐)
+pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/rocm6.2
+# ROCm 5.x
+pip install torch==2.3.0 torchvision==0.18.0 --index-url https://download.pytorch.org/whl/rocm5.7
+```
+
+验证: `python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0), torch.version.hip)"`
+
+| AMD GPU | 显存 | 推荐用途 |
+|---------|------|---------|
+| RX 7900 XTX | 24GB | 全流程训练 |
+| RX 7900 XT | 20GB | 全流程训练 |
+| RX 7800 XT | 16GB | Pretrain + SFT |
+| Instinct MI250X | 128GB | 大 batch / 长序列 |
+| Instinct MI300X | 192GB | 全部极致 |
+</details>
+
+<details>
+<summary><b>⚪ CPU</b></summary>
+
+```bash
+pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+```
+
+> 训练速度约为 GPU 的 10-50 倍，仅适合体验流程。GPU 不存在时 `--device` 自动降级到 `cpu`。
+</details>
 
 ## Ⅰ 🚀 模型推理
 
@@ -292,6 +349,12 @@ print(torch.cuda.is_available())
 
 > 当前默认仅需下载 `pretrain_t2t_mini.jsonl` 与 `sft_t2t_mini.jsonl`，即可较快复现 `MiniMind Zero` 对话模型。
 如有更多需求，下文提供多种搭配方案，可根据自身任务目标与 GPU 资源灵活选择。
+
+> **🆕 多格式支持**: 所有训练脚本的 `--data_path` 现在支持同时传入多个文件/多种格式（JSONL / JSON / CSV / Parquet / TXT），自动检测格式并合并。
+> ```bash
+> python train_full_sft.py --data_path ../dataset/sft_a.jsonl ../dataset/sft_b.jsonl ../dataset/extra.csv
+> ```
+> 详见下方 [多数据集与智能配置](#-多数据集与智能配置)。
 
 ### 2' 开始训练
 
@@ -1972,6 +2035,133 @@ python llmexport.py --path /path/to/模型路径/ --export mnn --hqq --dst_path 
 
 - 进行中...
 
+
+---
+
+# 📌 多数据集与智能配置
+
+## Ⅰ DataLoaderHub — 多格式数据加载
+
+`dataset/data_loader.py` 提供统一的跨格式数据加载，支持 JSONL / JSON / CSV / Parquet / TXT 自动检测与合并。
+
+```python
+from dataset.data_loader import DataLoaderHub, load_sft_data, load_pretrain_data
+
+hub = DataLoaderHub()
+# 单个文件自动检测格式
+ds = hub.load("../dataset/sft_data.csv")
+# 多个文件合并 + 列名自动归一化
+ds = hub.load_multi(["../dataset/sft_a.jsonl", "../dataset/sft_b.csv"], dataset_type="sft")
+# 便利函数
+ds = load_sft_data(["../dataset/sft_*.jsonl"])
+```
+
+**列别名映射** — 自动将第三方列名映射到 MiniMind 规范：
+
+| 数据类型 | 规范列名 | 自动识别的别名 |
+|----------|----------|--------------|
+| Pretrain | `text` | `content`, `document`, `passage`, `sentence`, `body`, `article` |
+| SFT | `conversations` | `messages`, `dialog`, `dialogue`, `chat`, `conversation`, `history` |
+| DPO | `chosen`, `rejected` | `preferred`→`chosen`, `dispreferred`→`rejected`, `positive`→`chosen` |
+| Agent | `conversations`, `gt` | `ground_truth`→`gt`, `answer`→`gt` |
+
+## Ⅱ DataProcessor — 数据处理管线
+
+`dataset/data_processor.py` 提供数据清洗、验证、过滤、去重的完整管线。
+
+```python
+from dataset.data_processor import process_dataset, describe_dataset, clean_text, deduplicate
+
+# 一键全流程: 清洗 → 验证 → 长度过滤 → 去重
+ds = process_dataset(raw_dataset, min_length=10, max_length=2048,
+                     dedup_threshold=3, clean=True, validate=True)
+
+# 生成统计报告
+stats = describe_dataset(ds)
+# 基于 SimHash 的近似去重
+ds = deduplicate(ds, threshold=3)
+```
+
+## Ⅲ 统一训练基础设施
+
+`trainer/training_loop.py` 提供统一的梯度累积、学习率调度和模型包装。
+
+```python
+from trainer.training_loop import (
+    Accumulator, MultiOptimizerAccumulator,   # 梯度累积器
+    create_scheduler,                          # 自动计算 T_max 的 CosineAnnealingLR
+    wrap_model,                                # compile → DDP → rollout_engine
+    save_model_weights, get_raw_model,         # 权重保存与解包
+)
+
+# 一行替代 5-8 行手动梯度累积代码
+acc = Accumulator(model, optimizer, scaler, accumulation_steps=8, grad_clip=1.0, scheduler=scheduler)
+for step, batch in enumerate(loader):
+    acc.backward(loss)              # 自动处理: 除累积步数 → backward → clip → step → zero_grad
+    print(acc.loss_value)           # 自动修正累积带来的 loss 偏移
+acc.finalize()                      # epoch 结束排空剩余梯度
+```
+
+**8 个训练脚本统改前后对比**:
+
+| 脚本 | 改前 | 改后 |
+|------|------|------|
+| `train_pretrain.py` | 手动累积 + 手动 get_lr + 手动 DDP | Accumulator + create_scheduler + wrap_model |
+| `train_full_sft.py` | 同上 | 同上 |
+| `train_lora.py` | 手动累积 + CosineAnnealingLR | 同上 |
+| `train_distillation.py` | 同上 | 同上 |
+| `train_dpo.py` | 同上 | 同上 |
+| `train_grpo.py` | 无 Scheduler + 无 GradScaler | 同上 |
+| `train_ppo.py` | 无 Scheduler + 无 GradScaler | MultiOptimizerAccumulator + wrap_model |
+| `train_agent.py` | 无 Scheduler + 无 GradScaler | Accumulator + create_scheduler + wrap_model |
+
+## Ⅳ 智能训练配置工具
+
+`scripts/auto_config.py` 自动检测硬件 + 分析数据集 + 调用大模型 API → 推荐最优训练参数。
+
+```bash
+# Dry run — 仅查看 prompt，不调用 API
+python scripts/auto_config.py --data_path ../dataset/sft_t2t_mini.jsonl --task full_sft --dry_run
+
+# 正式调用
+export OPENAI_API_KEY="sk-xxx"
+python scripts/auto_config.py \
+    --data_path ../dataset/sft_t2t_mini.jsonl \
+    --task full_sft --model_size 768 --num_layers 8 \
+    --output config.json
+
+# 兼容任何 OpenAI 格式 API
+python scripts/auto_config.py \
+    --api_base https://api.deepseek.com/v1 \
+    --api_key sk-xxx --model_name deepseek-chat
+```
+
+**工作流程**: `硬件探测 → 数据集分析 → 显存估算 → 构建 Prompt → 调用 LLM → 输出配置 JSON + 训练命令`
+
+**输出示例**:
+```json
+{
+  "batch_size": 16, "learning_rate": 1e-5, "max_seq_len": 768,
+  "epochs": 3, "accumulation_steps": 2, "dtype": "bfloat16",
+  "estimated_gpu_memory_gb": 5.2,
+  "reasoning": "RTX 3060 12GB 显存充足，10万条数据建议3轮训练..."
+}
+```
+
+## Ⅴ AMD GPU (ROCm) 兼容
+
+MiniMind 已适配 AMD GPU，所有 `torch.cuda.*` API 在 ROCm 下均可正常使用。`trainer_utils.py` 中的 cuDNN 调用已加 `hasattr(torch.backends, 'cudnn')` 守卫，自动跳过。
+
+```bash
+# ROCm 6.x 安装 PyTorch
+pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/rocm6.2
+# 验证
+python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0), torch.version.hip)"
+```
+
+详见上方 [第 0 步](#第0步) 的 AMD GPU 安装折叠区域。
+
+---
 
 # 🎓 引用
 

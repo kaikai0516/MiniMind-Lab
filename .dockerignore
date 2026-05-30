@@ -1,0 +1,55 @@
+# Byte-compiled
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Checkpoints & outputs (large binaries)
+checkpoints/
+ckpts/
+out/
+*.pth
+*.safetensors
+
+# Model weights (keep in separate storage)
+model/
+*.bin
+
+# Datasets
+dataset/*.jsonl
+dataset/*.json
+dataset/*.parquet
+!dataset/*.py
+
+# Environment & secrets
+.env
+*.env.local
+.env.production
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitattributes
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# Tests & CI
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Wandb / SwanLab logs
+wandb/
+swanlab/

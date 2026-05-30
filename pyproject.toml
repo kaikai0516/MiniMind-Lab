@@ -1,0 +1,101 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "minimind"
+version = "1.0.0"
+description = "MiniMind: 从零开始训练微型大语言模型"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "MiniMind Contributors" },
+]
+keywords = ["llm", "pretraining", "fine-tuning", "rlhf", "grpo", "dpo"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.10"
+
+dependencies = [
+    "datasets>=3.0",
+    "einops>=0.8",
+    "numpy>=1.26",
+    "rich>=13.7",
+    "tiktoken>=0.10",
+    "torch>=2.1",
+    "transformers>=4.40",
+    "jinja2>=3.1",
+]
+
+[project.optional-dependencies]
+train = [
+    "peft>=0.7",
+    "trl>=0.13",
+    "wandb>=0.18",
+    "swanlab>=0.7",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+]
+serve = [
+    "flask>=3.0",
+    "flask-cors>=4.0",
+    "openai>=1.50",
+    "streamlit>=1.40",
+]
+eval = [
+    "jieba>=0.42",
+    "jsonlines>=4.0",
+    "nltk>=3.8",
+    "scikit-learn>=1.5",
+    "sentence-transformers>=2.3",
+]
+data = [
+    "datasketch>=1.6",
+    "marshmallow>=3.22",
+    "simhash>=2.1",
+    "ujson>=5.1",
+    "modelscope>=1.30",
+]
+all = [
+    "minimind[train,serve,eval,data]",
+]
+
+[project.scripts]
+minimind-pretrain     = "trainer.cli:pretrain"
+minimind-full-sft     = "trainer.cli:full_sft"
+minimind-lora         = "trainer.cli:lora"
+minimind-distillation = "trainer.cli:distillation"
+minimind-dpo          = "trainer.cli:dpo"
+minimind-grpo         = "trainer.cli:grpo"
+minimind-ppo          = "trainer.cli:ppo"
+minimind-agent        = "trainer.cli:agent"
+minimind-eval         = "trainer.cli:eval_llm"
+minimind-serve        = "trainer.cli:serve"
+minimind-chat         = "trainer.cli:chat"
+minimind-auto-config  = "trainer.cli:auto_config"
+
+[tool.setuptools]
+py-modules = []
+
+[tool.setuptools.packages.find]
+include = ["trainer*", "model*", "dataset*", "scripts*"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
