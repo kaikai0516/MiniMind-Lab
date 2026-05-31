@@ -191,22 +191,52 @@ def _find_text_column(ds) -> str:
 # ==============================================================================
 # 3. 显存估算
 # ==============================================================================
+def _compute_exact_params(hidden_size: int, num_layers: int, use_moe: bool) -> int:
+    """按 MiniMind 真实架构精确计算参数量 — 不依赖 torch，纯公式。
+
+    架构: Decoder-Only Transformer + RMSNorm + RoPE + GQA + SwiGLU + 可选 MoE
+    与 model_minimind.py 中的 MiniMindForCausalLM 逐层对应。
+    """
+    vocab_size = 6400
+    num_attention_heads = 8
+    num_key_value_heads = 4
+    num_experts = 4
+    head_dim = hidden_size // num_attention_heads
+    # intermediate_size = ceil(hidden_size * pi / 64) * 64  (SwiGLU 惯例)
+    intermediate_size = math.ceil(hidden_size * math.pi / 64) * 64
+
+    # ---- Attention ----
+    q_proj = hidden_size * hidden_size
+    k_proj = hidden_size * (num_key_value_heads * head_dim)
+    v_proj = hidden_size * (num_key_value_heads * head_dim)
+    o_proj = hidden_size * hidden_size
+    q_norm = head_dim
+    k_norm = head_dim
+    attn_params = q_proj + k_proj + v_proj + o_proj + q_norm + k_norm
+
+    # ---- FFN (SwiGLU: gate + up + down) ----
+    ffn_params = 3 * hidden_size * intermediate_size
+
+    # ---- RMSNorm (每层 2 个) ----
+    norm_params = hidden_size * 2
+
+    # ---- 每层参数 ----
+    if use_moe:
+        router = hidden_size * num_experts
+        layer_params = attn_params + router + num_experts * ffn_params + norm_params
+    else:
+        layer_params = attn_params + ffn_params + norm_params
+
+    # ---- 总参数 ----
+    embed_params = vocab_size * hidden_size       # token embedding
+    final_norm = hidden_size                       # final RMSNorm
+    # 注意: lm_head 与 embedding 共享权重 (tie_word_embeddings=True)，不计入额外参数
+    return embed_params + num_layers * layer_params + final_norm
+
+
 def estimate_memory(hidden_size: int, num_layers: int, use_moe: bool,
                     batch_size: int, max_seq_len: int, dtype: str = "bfloat16") -> Dict[str, Any]:
-    # 从真实模型实例化获取精确参数量，不用近似公式
-    try:
-        from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
-        cfg = MiniMindConfig(hidden_size=hidden_size, num_hidden_layers=num_layers, use_moe=use_moe)
-        model = MiniMindForCausalLM(cfg)
-        total_params = sum(p.numel() for p in model.parameters())
-        del model
-    except Exception:
-        # 回退：近似公式 (12 * d^2 每层是粗略估计)
-        vocab = 6400
-        per_layer = 12 * hidden_size * hidden_size
-        if use_moe:
-            per_layer = int(per_layer * 1.8)
-        total_params = vocab * hidden_size + num_layers * per_layer
+    total_params = _compute_exact_params(hidden_size, num_layers, use_moe)
 
     bytes_per_param = 2 if "16" in dtype else 4
     model_gb = total_params * bytes_per_param / (1024**3)
