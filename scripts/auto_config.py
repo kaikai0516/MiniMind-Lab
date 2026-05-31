@@ -91,11 +91,21 @@ def hardware_probe() -> Dict[str, Any]:
         if torch.cuda.is_available():
             info["gpu_available"] = True
             info["gpu_count"] = torch.cuda.device_count()
+            # get_device_name(0) 比 get_device_properties(0).name 更可靠
+            gpu_name = torch.cuda.get_device_name(0)
+            if not gpu_name:
+                try:
+                    props = torch.cuda.get_device_properties(0)
+                    gpu_name = props.name
+                except Exception:
+                    gpu_name = "Unknown GPU"
+            info["gpu_name"] = gpu_name
             props = torch.cuda.get_device_properties(0)
-            info["gpu_name"] = props.name
             info["gpu_memory_gb"] = round(props.total_memory / (1024**3), 1)
             if hasattr(torch.version, 'hip') and torch.version.hip is not None:
                 info["gpu_backend"] = "ROCm"
+                if not info["gpu_name"] or info["gpu_name"] == "Unknown GPU":
+                    info["gpu_name"] = "AMD GPU (ROCm)"
             else:
                 info["gpu_backend"] = "CUDA"
     except ImportError:
@@ -183,12 +193,22 @@ def _find_text_column(ds) -> str:
 # ==============================================================================
 def estimate_memory(hidden_size: int, num_layers: int, use_moe: bool,
                     batch_size: int, max_seq_len: int, dtype: str = "bfloat16") -> Dict[str, Any]:
+    # 从真实模型实例化获取精确参数量，不用近似公式
+    try:
+        from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
+        cfg = MiniMindConfig(hidden_size=hidden_size, num_hidden_layers=num_layers, use_moe=use_moe)
+        model = MiniMindForCausalLM(cfg)
+        total_params = sum(p.numel() for p in model.parameters())
+        del model
+    except Exception:
+        # 回退：近似公式 (12 * d^2 每层是粗略估计)
+        vocab = 6400
+        per_layer = 12 * hidden_size * hidden_size
+        if use_moe:
+            per_layer = int(per_layer * 1.8)
+        total_params = vocab * hidden_size + num_layers * per_layer
+
     bytes_per_param = 2 if "16" in dtype else 4
-    vocab = 6400
-    per_layer = 12 * hidden_size * hidden_size
-    if use_moe:
-        per_layer = int(per_layer * 1.8)
-    total_params = vocab * hidden_size + num_layers * per_layer
     model_gb = total_params * bytes_per_param / (1024**3)
     grad_gb = model_gb
     optimizer_gb = total_params * 8 / (1024**3)  # AdamW fp32 states
@@ -320,6 +340,11 @@ def ai_based_config(task: str, hardware: Dict, dataset: Dict,
         print("[WARNING] openai 未安装，回退到本地规则模式")
         return rule_based_config(task, hardware, dataset, memory, hidden_size, num_layers, use_moe, data_path)
 
+    # 自动补齐 /v1 — DeepSeek / Ollama / vLLM 等都遵循 OpenAI 路径规范
+    api_base = api_base.rstrip("/")
+    if not api_base.endswith("/v1"):
+        api_base += "/v1"
+
     defaults = TASK_DEFAULTS.get(task, TASK_DEFAULTS["full_sft"])
 
     prompt = f"""你是一个深度学习训练配置专家。请为 MiniMind 微型语言模型推荐最优训练超参数。
@@ -334,10 +359,10 @@ def ai_based_config(task: str, hardware: Dict, dataset: Dict,
 
 ## 模型
 - hidden_size={hidden_size}, num_layers={num_layers}, MoE={use_moe}
-- 参数量: {memory['total_params_m']}M, 峰值显存估算: {memory['peak_gb']}GB
+- 实际参数量: {memory['total_params_m']}M, 峰值显存估算: {memory['peak_gb']}GB
 
 ## 数据集
-- 样本数: {dataset['total_samples']}
+- 样本数: {dataset['total_samples']:,}
 - 平均长度: {dataset.get('avg_chars', '?')}字符, P50: {dataset.get('char_p50', '?')}字符
 - 估算token数/样本: {dataset.get('est_tokens_per_sample', '?')}
 
@@ -347,19 +372,36 @@ def ai_based_config(task: str, hardware: Dict, dataset: Dict,
 请以 JSON 格式返回推荐配置，包含: batch_size(int), learning_rate(float), max_seq_len(int), epochs(int), accumulation_steps(int), dtype(str), reasoning(str, <100字)。
 仅输出JSON，不要其他内容。"""
 
+    print(f"  API endpoint: {api_base}")
     client = OpenAI(base_url=api_base, api_key=api_key)
     resp = client.chat.completions.create(
         model=model_name,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.1, max_tokens=1024,
     )
-    content = resp.choices[0].message.content.strip()
-    # Extract JSON
+
+    content = resp.choices[0].message.content
+    if content is None:
+        # 检查是否有拒绝/错误信息
+        finish = getattr(resp.choices[0], 'finish_reason', 'unknown')
+        raise ValueError(f"API 返回空内容 (finish_reason={finish})，请检查 API key 和模型名称是否正确")
+
+    content = content.strip()
+    if not content:
+        raise ValueError("API 返回空白内容，请检查 API key 和模型名称")
+
+    # 提取 JSON — 处理模型可能包裹 ```json ... ``` 或只返回纯 JSON 的情况
     if "```json" in content:
         content = content.split("```json")[1].split("```")[0].strip()
     elif "```" in content:
         content = content.split("```")[1].split("```")[0].strip()
-    ai_config = json.loads(content)
+
+    try:
+        ai_config = json.loads(content)
+    except json.JSONDecodeError:
+        raise ValueError(
+            f"API 返回的内容不是有效 JSON。返回内容前 200 字符:\n{content[:200]}"
+        )
 
     # Merge with defaults
     config = defaults.copy()
