@@ -34,7 +34,7 @@ class Accumulator:
         self,
         model: nn.Module,
         optimizer: torch.optim.Optimizer,
-        scaler: Optional[torch.cuda.amp.GradScaler] = None,
+        scaler = None,
         accumulation_steps: int = 1,
         grad_clip: float = 1.0,
         scheduler: Optional[LRScheduler] = None,
@@ -49,7 +49,7 @@ class Accumulator:
         self._counter = 0
         self._loss_sum = 0.0
         self._last_loss = 0.0
-        self.use_scaler = scaler is not None and (getattr(scaler, '_enabled', True))
+        self.use_scaler = scaler is not None and (getattr(scaler, '_enabled', True) if hasattr(scaler, '_enabled') else True)
 
     def backward(self, loss: torch.Tensor):
         """Backward pass with gradient scaling and periodic stepping."""

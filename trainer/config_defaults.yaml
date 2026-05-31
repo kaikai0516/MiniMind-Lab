@@ -9,22 +9,23 @@ pretrain:
   hidden_size: 768
   num_hidden_layers: 8
   use_moe: false
-  max_seq_len: 768
+  max_seq_len: 340
   data_path:
-    - ../dataset/pretrain_t2t_mini.jsonl
+    - ./dataset/pretrain_t2t_mini.jsonl
   from_weight: "none"
   save_weight: pretrain
-  batch_size: 64
+  batch_size: 32
   learning_rate: 5.0e-4
-  epochs: 3
+  epochs: 2
   accumulation_steps: 1
   grad_clip: 1.0
   dtype: bfloat16
   num_workers: 8
   log_interval: 100
   save_interval: 100
-  save_dir: ../out
-  checkpoint_dir: ../checkpoints
+  save_dir: ./out
+  checkpoint_dir: ./checkpoints
+  tokenizer_path: ./model
   checkpoint_max_keep: 3
   checkpoint_format: torch
   use_wandb: false
@@ -40,7 +41,7 @@ full_sft:
   use_moe: false
   max_seq_len: 768
   data_path:
-    - ../dataset/sft_t2t_mini.jsonl
+    - ./dataset/sft_t2t_mini.jsonl
   from_weight: pretrain
   save_weight: full_sft
   batch_size: 32
@@ -52,8 +53,9 @@ full_sft:
   num_workers: 8
   log_interval: 100
   save_interval: 100
-  save_dir: ../out
-  checkpoint_dir: ../checkpoints
+  save_dir: ./out
+  checkpoint_dir: ./checkpoints
+  tokenizer_path: ./model
   checkpoint_max_keep: 3
   checkpoint_format: torch
   use_wandb: false
@@ -69,7 +71,7 @@ lora:
   use_moe: false
   max_seq_len: 340
   data_path:
-    - ../dataset/lora_medical.jsonl
+    - ./dataset/lora_medical.jsonl
   from_weight: full_sft
   lora_name: lora_medical
   save_weight: lora_medical
@@ -82,8 +84,8 @@ lora:
   num_workers: 8
   log_interval: 10
   save_interval: 1000
-  save_dir: ../out
-  checkpoint_dir: ../checkpoints
+  save_dir: ./out
+  checkpoint_dir: ./checkpoints
   checkpoint_max_keep: 3
   checkpoint_format: torch
   use_wandb: false
@@ -102,7 +104,7 @@ distillation:
   teacher_use_moe: true
   max_seq_len: 340
   data_path:
-    - ../dataset/sft_t2t_mini.jsonl
+    - ./dataset/sft_t2t_mini.jsonl
   from_student_weight: full_sft
   from_teacher_weight: full_sft
   save_weight: full_dist
@@ -117,8 +119,8 @@ distillation:
   temperature: 1.5
   log_interval: 100
   save_interval: 100
-  save_dir: ../out
-  checkpoint_dir: ../checkpoints
+  save_dir: ./out
+  checkpoint_dir: ./checkpoints
   checkpoint_max_keep: 3
   checkpoint_format: torch
   use_wandb: false
@@ -134,7 +136,7 @@ dpo:
   use_moe: false
   max_seq_len: 1024
   data_path:
-    - ../dataset/dpo.jsonl
+    - ./dataset/dpo.jsonl
   from_weight: full_sft
   save_weight: dpo
   batch_size: 4
@@ -147,8 +149,8 @@ dpo:
   beta: 0.15
   log_interval: 100
   save_interval: 100
-  save_dir: ../out
-  checkpoint_dir: ../checkpoints
+  save_dir: ./out
+  checkpoint_dir: ./checkpoints
   checkpoint_max_keep: 3
   checkpoint_format: torch
   use_wandb: false
@@ -165,7 +167,7 @@ grpo:
   max_seq_len: 768
   max_gen_len: 1024
   data_path:
-    - ../dataset/rlaif.jsonl
+    - ./dataset/rlaif.jsonl
   from_weight: full_sft
   save_weight: grpo
   batch_size: 2
@@ -188,8 +190,8 @@ grpo:
   reward_model_path: "../../internlm2-1_8b-reward"
   log_interval: 1
   save_interval: 10
-  save_dir: ../out
-  checkpoint_dir: ../checkpoints
+  save_dir: ./out
+  checkpoint_dir: ./checkpoints
   checkpoint_max_keep: 3
   checkpoint_format: torch
   use_wandb: false
@@ -206,7 +208,7 @@ ppo:
   max_seq_len: 768
   max_gen_len: 1024
   data_path:
-    - ../dataset/rlaif.jsonl
+    - ./dataset/rlaif.jsonl
   from_weight: full_sft
   save_weight: ppo
   batch_size: 2
@@ -229,8 +231,8 @@ ppo:
   reward_model_path: "../../internlm2-1_8b-reward"
   log_interval: 1
   save_interval: 10
-  save_dir: ../out
-  checkpoint_dir: ../checkpoints
+  save_dir: ./out
+  checkpoint_dir: ./checkpoints
   checkpoint_max_keep: 3
   checkpoint_format: torch
   use_wandb: false
@@ -248,7 +250,7 @@ agent:
   max_gen_len: 768
   max_total_len: 2500
   data_path:
-    - ../dataset/agent_rl.jsonl
+    - ./dataset/agent_rl.jsonl
   from_weight: full_sft
   save_weight: agent
   batch_size: 2
@@ -271,8 +273,8 @@ agent:
   reward_model_path: "../../internlm2-1_8b-reward"
   log_interval: 1
   save_interval: 10
-  save_dir: ../out
-  checkpoint_dir: ../checkpoints
+  save_dir: ./out
+  checkpoint_dir: ./checkpoints
   checkpoint_max_keep: 3
   checkpoint_format: torch
   use_wandb: false

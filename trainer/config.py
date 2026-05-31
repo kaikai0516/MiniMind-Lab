@@ -128,7 +128,8 @@ class TrainingConfig:
     checkpoint_format: str = "torch"
 
     def __post_init__(self) -> None:
-        pass
+        if not self.device:
+            self.device = self.auto_device()
 
     def auto_device(self) -> str:
         if self.device:
@@ -323,3 +324,89 @@ def create_arg_parser(task: str) -> argparse.ArgumentParser:
     ``--config my.yaml``.
     """
     return _build_arg_parser(task)
+
+
+def set_parser_defaults_from_yaml(parser: argparse.ArgumentParser, task: str,
+                                   yaml_path: Optional[str] = None) -> None:
+    """Read config.yaml and set its values as argparse defaults.
+
+    Training scripts call this AFTER defining their arguments but BEFORE
+    ``parse_args()``.  Values from ``config.yaml`` become the new defaults;
+    CLI flags still override them.
+
+    Parameters
+    ----------
+    parser:
+        The argparse.ArgumentParser to update.
+    task:
+        Task key in config.yaml (e.g. ``"pretrain"``, ``"full_sft"``).
+    yaml_path:
+        Path to config.yaml.  Defaults to ``<project_root>/config.yaml``.
+    """
+    if yaml is None:
+        return
+    if yaml_path is None:
+        yaml_path = str(Path(__file__).resolve().parent.parent / "config.yaml")
+    if not os.path.exists(yaml_path):
+        return
+
+    try:
+        with open(yaml_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+    except Exception:
+        return
+
+    g = cfg.get("global", {})
+    paths = cfg.get("paths", {})
+    log_cfg = cfg.get("logging", {})
+    ckpt_cfg = cfg.get("checkpoint", {})
+    adv = cfg.get("advanced", {})
+    task_cfg = cfg.get(task, {})
+
+    # Resolve: task section > global section > existing parser default
+    def _resolve(*keys, default=None):
+        for d in keys:
+            if isinstance(d, dict) and d.get(keys[0] if keys else None) is not None:
+                val = d.get(keys[0] if keys else None)
+                if val is not None:
+                    return val
+            elif d is not None:
+                return d
+        return default
+
+    mapping = {
+        "hidden_size":        task_cfg.get("hidden_size", g.get("hidden_size")),
+        "num_hidden_layers":  task_cfg.get("num_hidden_layers", g.get("num_hidden_layers")),
+        "use_moe":            1 if task_cfg.get("use_moe", g.get("use_moe", False)) else 0,
+        "max_seq_len":        task_cfg.get("max_seq_len", g.get("max_seq_len")),
+        "dtype":              task_cfg.get("dtype", g.get("dtype")),
+        "num_workers":        task_cfg.get("num_workers", g.get("num_workers")),
+        "data_path":          task_cfg.get("data_path"),
+        "from_weight":        task_cfg.get("from_weight"),
+        "save_weight":        task_cfg.get("save_weight"),
+        "batch_size":         task_cfg.get("batch_size"),
+        "learning_rate":      task_cfg.get("learning_rate"),
+        "epochs":             task_cfg.get("epochs"),
+        "accumulation_steps": task_cfg.get("accumulation_steps"),
+        "grad_clip":          task_cfg.get("grad_clip"),
+        "save_dir":           paths.get("save_dir"),
+        "checkpoint_dir":     paths.get("checkpoint_dir"),
+        "tokenizer_path":     paths.get("tokenizer_path"),
+        "save_interval":      ckpt_cfg.get("save_interval"),
+        "log_interval":       log_cfg.get("log_interval"),
+        "use_wandb":          log_cfg.get("use_wandb", False),
+        "wandb_project":      log_cfg.get("wandb_project"),
+        "use_compile":        1 if adv.get("use_compile", False) else 0,
+        "from_resume":        1 if adv.get("from_resume", False) else 0,
+    }
+
+    for action in parser._actions:
+        dest = action.dest
+        if dest in mapping and mapping[dest] is not None:
+            val = mapping[dest]
+            # bool conversion for store_true
+            if isinstance(action, argparse._StoreTrueAction) and isinstance(val, bool):
+                if val:
+                    action.default = True
+            elif not isinstance(action, argparse._StoreTrueAction):
+                action.default = val

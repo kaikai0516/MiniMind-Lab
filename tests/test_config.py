@@ -24,7 +24,7 @@ class TestLoadConfig:
     def test_pretrain_defaults(self):
         cfg = load_config("pretrain", [])
         assert cfg.task == "pretrain"
-        assert cfg.batch_size == 64
+        assert cfg.batch_size == 32
         assert cfg.learning_rate == 5.0e-4
 
     def test_dpo_defaults(self):

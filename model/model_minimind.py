@@ -9,40 +9,76 @@ from transformers.modeling_outputs import MoeCausalLMOutputWithPast
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
 class MiniMindConfig(PretrainedConfig):
     model_type = "minimind"
-    def __init__(self, hidden_size=768, num_hidden_layers=8, use_moe=False, **kwargs):
-        super().__init__(**kwargs)
+
+    def __init__(
+        self,
+        hidden_size=768,
+        num_hidden_layers=8,
+        use_moe=False,
+        vocab_size=6400,
+        bos_token_id=1,
+        eos_token_id=2,
+        dropout=0.0,
+        flash_attn=True,
+        num_attention_heads=8,
+        num_key_value_heads=4,
+        head_dim=None,
+        hidden_act="silu",
+        intermediate_size=None,
+        max_position_embeddings=32768,
+        rms_norm_eps=1e-6,
+        rope_theta=1_000_000.0,
+        tie_word_embeddings=True,
+        inference_rope_scaling=False,
+        rope_scaling=None,
+        num_experts=4,
+        num_experts_per_tok=1,
+        moe_intermediate_size=None,
+        norm_topk_prob=True,
+        router_aux_loss_coef=5e-4,
+        **kwargs
+    ):
+        super().__init__(
+            vocab_size=vocab_size,
+            bos_token_id=bos_token_id,
+            eos_token_id=eos_token_id,
+            tie_word_embeddings=tie_word_embeddings,
+            **kwargs
+        )
         self.hidden_size = hidden_size
         self.num_hidden_layers = num_hidden_layers
         self.use_moe = use_moe
-        self.dropout = kwargs.get("dropout", 0.0)
-        self.vocab_size = kwargs.get("vocab_size", 6400)
-        self.bos_token_id = kwargs.get("bos_token_id", 1)
-        self.eos_token_id = kwargs.get("eos_token_id", 2)
-        self.flash_attn = kwargs.get("flash_attn", True)
-        self.num_attention_heads = kwargs.get("num_attention_heads", 8)
-        self.num_key_value_heads = kwargs.get("num_key_value_heads", 4)
-        self.head_dim = kwargs.get("head_dim", self.hidden_size // self.num_attention_heads)
-        self.hidden_act = kwargs.get("hidden_act", 'silu')
-        self.intermediate_size = kwargs.get("intermediate_size", math.ceil(hidden_size * math.pi / 64) * 64)
-        self.max_position_embeddings = kwargs.get("max_position_embeddings", 32768)
-        self.rms_norm_eps = kwargs.get("rms_norm_eps", 1e-6)
-        self.rope_theta = kwargs.get("rope_theta", 1e6)
-        self.tie_word_embeddings = kwargs.get("tie_word_embeddings", True)
-        self.inference_rope_scaling = kwargs.get("inference_rope_scaling", False)
-        self.rope_scaling = {
-            "beta_fast": 32,
-            "beta_slow": 1,
-            "factor": 16,
-            "original_max_position_embeddings": 2048,
-            "attention_factor": 1.0,
-            "type": "yarn"
-        } if self.inference_rope_scaling else None
-        ### MoE specific configs (ignored if use_moe = False)
-        self.num_experts = kwargs.get("num_experts", 4)
-        self.num_experts_per_tok = kwargs.get("num_experts_per_tok", 1)
-        self.moe_intermediate_size = kwargs.get("moe_intermediate_size", self.intermediate_size)
-        self.norm_topk_prob = kwargs.get("norm_topk_prob", True)
-        self.router_aux_loss_coef = kwargs.get("router_aux_loss_coef", 5e-4)
+        self.dropout = dropout
+        self.vocab_size = vocab_size
+        self.bos_token_id = bos_token_id
+        self.eos_token_id = eos_token_id
+        self.flash_attn = flash_attn
+        self.num_attention_heads = num_attention_heads
+        self.num_key_value_heads = num_key_value_heads
+        self.head_dim = head_dim or (hidden_size // num_attention_heads)
+        self.hidden_act = hidden_act
+        self.intermediate_size = intermediate_size or math.ceil(hidden_size * math.pi / 64) * 64
+        self.max_position_embeddings = max_position_embeddings
+        self.rms_norm_eps = rms_norm_eps
+        self.rope_theta = rope_theta
+        self.tie_word_embeddings = tie_word_embeddings
+        self.inference_rope_scaling = inference_rope_scaling
+        self.rope_scaling = rope_scaling
+        if inference_rope_scaling and rope_scaling is None:
+            self.rope_scaling = {
+                "beta_fast": 32,
+                "beta_slow": 1,
+                "factor": 16,
+                "original_max_position_embeddings": 2048,
+                "attention_factor": 1.0,
+                "type": "yarn"
+            }
+        # MoE specific configs (ignored if use_moe = False)
+        self.num_experts = num_experts
+        self.num_experts_per_tok = num_experts_per_tok
+        self.moe_intermediate_size = moe_intermediate_size or self.intermediate_size
+        self.norm_topk_prob = norm_topk_prob
+        self.router_aux_loss_coef = router_aux_loss_coef
 
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
 #                                     MiniMind Model
@@ -234,13 +270,35 @@ class MiniMindModel(nn.Module):
 class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
     config_class = MiniMindConfig
     _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
+    _supports_cache_class = True
+    base_model_prefix = "model"
+
     def __init__(self, config: MiniMindConfig = None):
-        self.config = config or MiniMindConfig()
-        super().__init__(self.config)
-        self.model = MiniMindModel(self.config)
-        self.lm_head = nn.Linear(self.config.hidden_size, self.config.vocab_size, bias=False)
-        if self.config.tie_word_embeddings: self.model.embed_tokens.weight = self.lm_head.weight
+        if config is None:
+            config = MiniMindConfig()
+        super().__init__(config)
+        self.model = MiniMindModel(config)
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        if config.tie_word_embeddings:
+            self.lm_head.weight = self.model.embed_tokens.weight
+        # Initialize weights for training from scratch
         self.post_init()
+
+    def _init_weights(self, module):
+        """Initialize weights properly for training from scratch.
+
+        Uses a small-scale initialization suited for a 64M-param model.
+        Embedding: normal(0, 0.02), Linear: normal(0, 0.02/std), biases: zeros.
+        """
+        std = 0.02
+        if isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, mean=0.0, std=std)
+        elif isinstance(module, nn.Linear):
+            nn.init.normal_(module.weight, mean=0.0, std=std / math.sqrt(2 * self.config.num_hidden_layers))
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, RMSNorm):
+            nn.init.ones_(module.weight)
 
     def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, logits_to_keep=0, labels=None, **kwargs):
         hidden_states, past_key_values, aux_loss = self.model(input_ids, attention_mask, past_key_values, use_cache, **kwargs)
@@ -251,6 +309,33 @@ class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
             x, y = logits[..., :-1, :].contiguous(), labels[..., 1:].contiguous()
             loss = F.cross_entropy(x.view(-1, x.size(-1)), y.view(-1), ignore_index=-100)
         return MoeCausalLMOutputWithPast(loss=loss, aux_loss=aux_loss, logits=logits, past_key_values=past_key_values, hidden_states=hidden_states)
+
+    def save_pretrained(self, save_directory, **kwargs):
+        """Save model weights in HuggingFace-compatible format."""
+        import os, json
+        os.makedirs(save_directory, exist_ok=True)
+        # Save config
+        self.config.save_pretrained(save_directory)
+        # Save weights
+        state_dict = {k: v.cpu() for k, v in self.state_dict().items()}
+        torch.save(state_dict, os.path.join(save_directory, "pytorch_model.bin"))
+        return save_directory
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+        """Load model from a directory or from scratch with config only."""
+        import os, json
+        config = kwargs.pop("config", None)
+        if config is None and os.path.isdir(pretrained_model_name_or_path):
+            config = MiniMindConfig.from_pretrained(pretrained_model_name_or_path)
+        elif config is None:
+            config = MiniMindConfig()
+        model = cls(config)
+        weight_path = os.path.join(pretrained_model_name_or_path, "pytorch_model.bin")
+        if os.path.exists(weight_path):
+            state_dict = torch.load(weight_path, map_location="cpu")
+            model.load_state_dict(state_dict, strict=False)
+        return model
     
     # https://github.com/jingyaogong/minimind/discussions/611
     @torch.inference_mode()

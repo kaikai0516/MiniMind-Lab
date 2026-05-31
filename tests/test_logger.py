@@ -21,19 +21,34 @@ class TestGetLogger:
         assert True
 
     def test_file_handler(self):
-        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".log") as f:
-            tmp = f.name
+        # Reset the logger singleton so MINIMIND_LOG_FILE is picked up
+        import trainer.logger as _logmod
+        _logmod._initialised = False
+        _logmod._root_logger = None
+
+        # Use a temp filename without holding it open (avoids Windows file locking)
+        tmp = os.path.join(tempfile.gettempdir(), f"test_minimind_{os.getpid()}.log")
         try:
             os.environ["MINIMIND_LOG_FILE"] = tmp
-            # Re-import won't re-init; test the path directly
+            # Re-read the env var (it's captured at module import time)
+            _logmod._file_path = tmp
             log = get_logger("test.file")
             log.warning("file test message")
-            with open(tmp, "r") as fh:
+            # Force flush all handlers to ensure the message is written
+            for handler in _logmod._root_logger.handlers:
+                handler.flush()
+                handler.close()
+            with open(tmp, "r", encoding="utf-8") as fh:
                 content = fh.read()
             assert "file test message" in content
         finally:
-            os.unlink(tmp)
+            if os.path.exists(tmp):
+                os.unlink(tmp)
             os.environ.pop("MINIMIND_LOG_FILE", None)
+            # Reset again so other tests aren't affected
+            _logmod._initialised = False
+            _logmod._root_logger = None
+            _logmod._file_path = ""
 
     def test_set_level(self):
         set_level("DEBUG")

@@ -52,7 +52,7 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, metrics_writer=N
             model.eval()
             save_model_weights(model, args.save_dir, args.save_weight, lm_config.hidden_size, lm_config.use_moe)
             lm_checkpoint(lm_config, weight=args.save_weight, model=model, optimizer=optimizer,
-                         epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints', scheduler=scheduler)
+                         epoch=epoch, step=step, wandb=wandb, save_dir=args.checkpoint_dir, scheduler=scheduler)
             model.train()
 
         del input_ids, labels, res, loss
@@ -62,7 +62,8 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, metrics_writer=N
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MiniMind Full SFT")
-    parser.add_argument("--save_dir", type=str, default="../out", help="模型保存目录")
+    parser.add_argument("--save_dir", type=str, default="./out", help="模型保存目录")
+    parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints", help="检查点保存目录")
     parser.add_argument('--save_weight', default='full_sft', type=str, help="保存权重的前缀名")
     parser.add_argument("--epochs", type=int, default=2, help="训练轮数")
     parser.add_argument("--batch_size", type=int, default=16, help="batch size")
@@ -73,17 +74,21 @@ if __name__ == "__main__":
     parser.add_argument("--accumulation_steps", type=int, default=1, help="梯度累积步数")
     parser.add_argument("--grad_clip", type=float, default=1.0, help="梯度裁剪阈值")
     parser.add_argument("--log_interval", type=int, default=100, help="日志打印间隔")
-    parser.add_argument("--save_interval", type=int, default=1000, help="模型保存间隔")
+    parser.add_argument("--save_interval", type=int, default=100, help="模型保存间隔")
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
     parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
     parser.add_argument('--max_seq_len', default=768, type=int, help="训练的最大截断长度（中文1token≈1.5~1.7字符）")
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
-    parser.add_argument("--data_path", type=str, nargs='+', default=["../dataset/sft_t2t_mini.jsonl"], help="训练数据路径（支持多个文件/目录）")
+    parser.add_argument("--data_path", type=str, nargs='+', default=["./dataset/sft_t2t_mini.jsonl"], help="训练数据路径（支持多个文件/目录）")
     parser.add_argument('--from_weight', default='pretrain', type=str, help="基于哪个权重训练，为none则不基于任何权重训练")
     parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
     parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb")
     parser.add_argument("--wandb_project", type=str, default="MiniMind-Full-SFT", help="wandb项目名")
     parser.add_argument("--use_compile", default=0, type=int, choices=[0, 1], help="是否使用torch.compile加速（0=否，1=是）")
+    parser.add_argument("--tokenizer_path", type=str, default="./model", help="Tokenizer路径")
+    # 从 config.yaml 加载默认值
+    from trainer.config import set_parser_defaults_from_yaml
+    set_parser_defaults_from_yaml(parser, task="full_sft")
     args = parser.parse_args()
 
     # ========== 1. 初始化环境和随机种子 ==========
@@ -93,8 +98,9 @@ if __name__ == "__main__":
 
     # ========== 2. 配置目录、模型参数、检查ckp ==========
     os.makedirs(args.save_dir, exist_ok=True)
+    os.makedirs(args.checkpoint_dir, exist_ok=True)
     lm_config = MiniMindConfig(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers, use_moe=bool(args.use_moe))
-    ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume==1 else None
+    ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir=args.checkpoint_dir) if args.from_resume==1 else None
 
     # ========== 3. 设置混合精度 ==========
     device_type = "cuda" if "cuda" in args.device else "cpu"
@@ -113,7 +119,7 @@ if __name__ == "__main__":
     metrics_writer = MetricsWriter("./metrics.csv") if is_main_process() else None
 
     # ========== 5. 定义模型、数据、优化器 ==========
-    model, tokenizer = init_model(lm_config, args.from_weight, device=args.device)
+    model, tokenizer = init_model(lm_config, args.from_weight, tokenizer_path=args.tokenizer_path, save_dir=args.save_dir, device=args.device)
     train_ds = SFTDataset(args.data_path, tokenizer, max_length=args.max_seq_len)
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
     scaler = torch.cuda.amp.GradScaler(enabled=(args.dtype == 'float16'))

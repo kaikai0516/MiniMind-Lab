@@ -1,147 +1,126 @@
 # =============================================================================
-#  MiniMind-Lab 训练配置
-#  这是你唯一需要关注的配置文件。所有参数按任务类型分组。
+#  MiniMind 统一训练配置
 #
-#  使用方式：
-#    1. 直接修改下方参数
-#    2. 运行时会自动加载本文件: trainer/train_full_sft.py
-#    3. CLI 参数可临时覆盖: --epochs 5 --batch_size 64
+#  使用方法:
+#    1. 运行智能配置工具生成推荐配置:
+#       python scripts/auto_config.py --data_path <你的数据路径> --task <任务类型>
 #
-#  配置优先级: 本文件默认值 → 用户 YAML → CLI 参数
+#    2. 或手动修改下方参数
+#
+#    3. 运行训练 (自动读取本文件):
+#       python trainer/train_pretrain.py
+#       python trainer/train_full_sft.py
+#
+#  配置优先级: config.yaml 默认值 → CLI 参数
 # =============================================================================
 
-# ── 全局默认 ────────────────────────────────────────────────────────────────
+# -- 全局默认 --
 global:
-  hidden_size: 768          # 隐藏层维度 (512/768/1024)
-  num_hidden_layers: 8      # Transformer 层数 (4/8/12)
-  use_moe: false            # 是否启用 MoE 混合专家
-  max_seq_len: 768          # 最大序列长度
-  dtype: bfloat16           # 训练精度: float16 / bfloat16 / float32
-  num_workers: 8            # DataLoader 工作进程数
-  device: ""                # 留空自动检测 (cuda:0 / cpu)
+  hidden_size: 768          # 隐藏层维度 (512/768)
+  num_hidden_layers: 8      # Transformer 层数 (4/8)
+  use_moe: false            # 是否启用 MoE
+  max_seq_len: 768
+  dtype: bfloat16
+  num_workers: 8
+  device: ""
 
-# ── 路径 ────────────────────────────────────────────────────────────────────
+# -- 路径 --
 paths:
-  data_dir: ./dataset           # 数据集目录
-  save_dir: ./out               # 模型权重输出目录
-  checkpoint_dir: ./checkpoints # 检查点保存目录
-  tokenizer_path: ./model       # Tokenizer 路径
+  data_dir: ./dataset
+  save_dir: ./out
+  checkpoint_dir: ./checkpoints
+  tokenizer_path: ./model
 
-# ── Checkpoint ───────────────────────────────────────────────────────────────
+# -- Checkpoint --
 checkpoint:
-  max_keep: 3               # 最多保留检查点数 (旧自动删除)
-  format: torch             # 保存格式: torch / safetensors
-  save_interval: 100        # 每 N 步保存一次
+  max_keep: 3
+  format: torch
+  save_interval: 100
 
-# ── 日志与监控 ───────────────────────────────────────────────────────────────
+# -- 日志与监控 --
 logging:
-  log_interval: 100         # 每 N 步打印一次 loss
-  use_wandb: false          # 启用 SwanLab/Wandb 云端记录
+  log_interval: 100
+  use_wandb: false
   wandb_project: MiniMind-Lab
-  metrics_csv: ./metrics.csv # 训练指标 CSV (供 Jupyter 读取)
+  metrics_csv: ./metrics.csv
 
-# ╔════════════════════════════════════════════════════════════════════════════╗
-# ║                        各任务类型专属参数                                    ║
-# ╚════════════════════════════════════════════════════════════════════════════╝
+# =============================================================================
+# 下方按任务类型配置。运行 auto_config.py 会自动填充最优参数。
+# =============================================================================
 
-# ── 第1步: 预训练 ───────────────────────────────────────────────────────────
+# -- 第1步: 预训练 --
 pretrain:
   data_path:
-    - dataset/pretrain_t2t_mini.jsonl
-  from_weight: "none"        # 起始权重: "none" = 从头训练
+    - dataset/pretrain_t2t_mini.jsonl   # <- 改为你的数据路径
+  from_weight: "none"
   save_weight: pretrain
-  batch_size: 64
-  learning_rate: 0.0005      # 5e-4
-  epochs: 3
-  accumulation_steps: 1      # 梯度累积步数 (等效 batch = bs × accum)
-  grad_clip: 1.0
-
-# ── 第2步: 全量 SFT 微调 ─────────────────────────────────────────────────────
-full_sft:
-  data_path:
-    - dataset/sft_t2t_mini.jsonl
-  from_weight: pretrain
-  save_weight: full_sft
   batch_size: 32
-  learning_rate: 0.00001     # 1e-5
-  epochs: 3
+  learning_rate: 0.0005
+  epochs: 2
   accumulation_steps: 1
   grad_clip: 1.0
 
-# ── 第3步(可选): LoRA 微调 ───────────────────────────────────────────────────
+# -- 第2步: 全量 SFT --
+full_sft:
+  data_path:
+    - dataset/sft_t2t_mini.jsonl        # <- 改为你的数据路径
+  from_weight: pretrain
+  save_weight: full_sft
+  batch_size: 16
+  learning_rate: 0.00001
+  epochs: 2
+  accumulation_steps: 1
+  grad_clip: 1.0
+
+# -- 第3步: LoRA (可选) --
 lora:
   data_path:
     - dataset/lora_medical.jsonl
   from_weight: full_sft
-  lora_name: lora_medical
-  save_weight: lora_medical
+  lora_name: lora_weights
+  save_weight: lora_weights
   batch_size: 32
-  learning_rate: 0.0001      # 1e-4
+  learning_rate: 0.0001
   epochs: 10
   accumulation_steps: 1
   grad_clip: 1.0
 
-# ── 第4步(可选): 知识蒸馏 ────────────────────────────────────────────────────
+# -- 第4步: 蒸馏 (可选) --
 distillation:
   data_path:
     - dataset/sft_t2t_mini.jsonl
-  student_hidden_size: 768
-  student_num_layers: 8
-  teacher_hidden_size: 768
-  teacher_num_layers: 8
-  student_use_moe: false
-  teacher_use_moe: true
   from_student_weight: full_sft
   from_teacher_weight: full_sft
   save_weight: full_dist
   batch_size: 32
-  learning_rate: 0.000005    # 5e-6
+  learning_rate: 0.000005
   epochs: 6
   accumulation_steps: 1
   grad_clip: 1.0
-  alpha: 0.5                 # 蒸馏损失权重 (0=仅CE, 1=仅蒸馏)
-  temperature: 1.5           # 蒸馏温度
+  alpha: 0.5
+  temperature: 1.5
 
-# ── 第5步(可选): DPO 偏好对齐 ────────────────────────────────────────────────
+# -- 第5步: DPO (可选) --
 dpo:
   data_path:
     - dataset/dpo.jsonl
   from_weight: full_sft
   save_weight: dpo
   batch_size: 4
-  learning_rate: 0.00000004  # 4e-8
+  learning_rate: 0.00000004
   epochs: 1
   accumulation_steps: 1
   grad_clip: 1.0
-  beta: 0.15                 # DPO KL 散度系数
+  beta: 0.15
 
-# ── 第6步(可选): GRPO 强化学习 ───────────────────────────────────────────────
+# -- 第6步: GRPO (可选) --
 grpo:
   data_path:
     - dataset/rlaif.jsonl
   from_weight: full_sft
   save_weight: grpo
   batch_size: 2
-  learning_rate: 0.0000003   # 3e-7
-  epochs: 1
-  accumulation_steps: 1
-  grad_clip: 1.0
-  max_gen_len: 1024          # 单次生成最大 token 数
-  num_generations: 6         # 每个 prompt 生成几个 response
-  beta: 0.1                  # KL 惩罚系数
-  loss_type: cispo           # "cispo" (推荐) / "grpo"
-  epsilon: 0.2               # GRPO clip epsilon
-  epsilon_high: 5.0          # CISPO 上界
-  thinking_ratio: 0.9        # 随机启用 <think> 的概率
-
-# ── 第7步(可选): PPO 强化学习 ────────────────────────────────────────────────
-ppo:
-  data_path:
-    - dataset/rlaif.jsonl
-  from_weight: full_sft
-  save_weight: ppo
-  batch_size: 2
-  learning_rate: 0.0000003   # 3e-7
+  learning_rate: 0.0000003
   epochs: 1
   accumulation_steps: 1
   grad_clip: 1.0
@@ -153,14 +132,33 @@ ppo:
   epsilon_high: 5.0
   thinking_ratio: 0.9
 
-# ── 第8步(可选): Agent RL ────────────────────────────────────────────────────
+# -- 第7步: PPO (可选) --
+ppo:
+  data_path:
+    - dataset/rlaif.jsonl
+  from_weight: full_sft
+  save_weight: ppo
+  batch_size: 2
+  learning_rate: 0.0000003
+  epochs: 1
+  accumulation_steps: 1
+  grad_clip: 1.0
+  max_gen_len: 1024
+  num_generations: 6
+  beta: 0.1
+  loss_type: cispo
+  epsilon: 0.2
+  epsilon_high: 5.0
+  thinking_ratio: 0.9
+
+# -- 第8步: Agent RL (可选) --
 agent:
   data_path:
     - dataset/agent_rl.jsonl
   from_weight: full_sft
   save_weight: agent
   batch_size: 2
-  learning_rate: 0.0000003   # 3e-7
+  learning_rate: 0.0000003
   epochs: 1
   accumulation_steps: 1
   grad_clip: 1.0
@@ -171,19 +169,19 @@ agent:
   loss_type: cispo
   epsilon: 0.2
   epsilon_high: 5.0
-  thinking_ratio: 0.1        # Agent 场景低思考比例
+  thinking_ratio: 0.1
 
-# ── 高级: Rollout Engine (RL 推理加速) ──────────────────────────────────────
+# -- Rollout Engine --
 rollout:
-  engine: torch              # "torch" (默认) / "sglang" (高性能)
+  engine: torch
   sglang_base_url: "http://localhost:8998"
   sglang_model_path: "../model"
   sglang_shared_path: "./sglang_ckpt"
   reward_model_path: "../../internlm2-1_8b-reward"
 
-# ── 高级: 编译与调试 ─────────────────────────────────────────────────────────
+# -- 高级选项 --
 advanced:
-  use_compile: false         # torch.compile 加速 (PyTorch 2.0+)
-  debug_mode: false          # 启用调试模式 (更多日志)
-  debug_interval: 20         # 调试模式 step 间隔
-  from_resume: false         # 断点续训
+  use_compile: false
+  debug_mode: false
+  debug_interval: 20
+  from_resume: false
